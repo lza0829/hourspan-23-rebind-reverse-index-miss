@@ -1,0 +1,11 @@
+{
+  "fixture": "rebind_store_key",
+  "note": "一键改绑：旧键全部 hist 段与当前镜过户到新键；旧键清空、新键继承段数",
+  "rebinds": [
+    {
+      "old_store_id": "ST-EAST-02",
+      "new_store_id": "ST-EAST-02R",
+      "reason": "门店系统换码：东城二店业务键迁移"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "fixture": "rebind_half_migrate",
+  "note": "演练：故意在 hist 归属改写后、current 切换前注入故障（after_hist）；该笔必须整笔回滚——旧键原样、新键干净、无映射落库",
+  "rebinds": [
+    {
+      "old_store_id": "ST-WEST-02",
+      "new_store_id": "ST-WEST-02R",
+      "reason": "半迁移演练：中途失败验证失败闭",
+      "simulate_fault": "after_hist"
+    }
+  ]
+}
