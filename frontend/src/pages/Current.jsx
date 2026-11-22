@@ -15,7 +15,10 @@ export default function Current() {
       <div className="topbar">
         <div>
           <h1>当前镜</h1>
-          <p>dim_store_hours_current：每店一行，指向 is_current 历史行。</p>
+          <p>
+            dim_store_hours_current：每店一行，指向 is_current 历史行。
+            改绑后旧键名下无镜、镜只挂新键；旧键请求经反查路由到新键（核证页可点查）。
+          </p>
         </div>
       </div>
       {err && <p className="error">{err}</p>}

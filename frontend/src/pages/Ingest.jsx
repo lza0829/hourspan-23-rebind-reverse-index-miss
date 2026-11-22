@@ -31,7 +31,10 @@ export default function Ingest() {
       <div className="topbar">
         <div>
           <h1>入档</h1>
-          <p>把门店营业属性快照写入 source_snapshots（贴源入档批）。不在此页直接改历史维。</p>
+          <p>
+            把门店营业属性快照写入 source_snapshots（贴源入档批）。不在此页直接改历史维。
+            旧键来片按反查索引路由：命中 old 自动改写 new（payload 留痕），缺反查则拒绝入档。
+          </p>
         </div>
       </div>
       <div className="panel">

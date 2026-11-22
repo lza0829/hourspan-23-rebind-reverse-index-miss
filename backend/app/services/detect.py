@@ -2,6 +2,7 @@ import json
 from uuid import uuid4
 
 from app.db import connect
+from app.modules import rebind_reverse_index as rebind_idx
 from app.seed import now_iso
 
 
@@ -11,13 +12,9 @@ def run_detect(batch_id: str | None = None):
     run_id = f"DET-{uuid4().hex[:8]}"
     now = now_iso()
     try:
-        # 键改绑协同：已被取代的旧键快照不再参与检测，防止旧键复活出第二面镜
-        superseded = {
-            r["old_store_id"]
-            for r in conn.execute(
-                "SELECT DISTINCT old_store_id FROM store_key_rebinds"
-            ).fetchall()
-        }
+        # 键改绑协同（架构甲：反查索引为路由权威）：已被取代的旧键快照不再参与
+        # 检测，防止旧键借检测复活出第二面镜；权威口径统一走反查模块。
+        superseded = rebind_idx.superseded_old_keys(conn)
         if batch_id:
             snaps = conn.execute(
                 "SELECT * FROM source_snapshots WHERE batch_id=? ORDER BY store_id, as_of_ts",

@@ -60,6 +60,11 @@ def batches():
 
 @router.get("/history")
 def history(store_id: str | None = None):
+    """历史维浏览：无参全表；带 store_id 为直接维表过滤。
+
+    旧键点查的权威路由走 /api/rebind/route（架构甲：命中 old 经反查转 new，
+    缺反查则失败），本端点不静默改写键，避免路由口径分叉。
+    """
     conn = connect()
     try:
         if store_id:
@@ -232,13 +237,44 @@ def stubs():
 # --- plant routes ---
 from app.modules import rebind_reverse_index as rebind_idx
 
+
 @router.get("/rebind/reverse-index")
 def rebind_reverse_index(old_store_id: str | None = None):
+    """旧键反查索引：按 old 点查（old→new/run_id/段数/时刻），无参则全量。"""
     conn = connect()
     try:
         if old_store_id:
             return rebind_idx.lookup_old(conn, old_store_id)
         return rebind_idx.list_index(conn)
+    finally:
+        conn.close()
+
+
+@router.get("/rebind/reverse-index/verify")
+def rebind_reverse_index_verify():
+    """旧键反查核证（只读，基线所无）：反查 vs 实归属四项硬约束 + 缺行反扫。"""
+    conn = connect()
+    try:
+        return rebind_idx.verify_reverse_index(conn)
+    finally:
+        conn.close()
+
+
+@router.get("/rebind/route")
+def rebind_route(store_id: str):
+    """点查路由权威：入档/点查遇到旧键时的解析结果（命中 old 必转 new）。
+
+    架构甲：缺反查且库内已空 → 409 reverse_index_missing；未注册 → 404。
+    """
+    conn = connect()
+    try:
+        try:
+            return rebind_idx.routed_lookup(conn, store_id)
+        except rebind_idx.ReverseIndexError as exc:
+            raise HTTPException(
+                rebind_idx.ERR_HTTP.get(exc.err_type, 409),
+                {"type": exc.err_type, "detail": exc.detail},
+            )
     finally:
         conn.close()
 

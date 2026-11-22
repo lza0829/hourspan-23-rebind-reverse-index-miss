@@ -35,7 +35,10 @@ export default function History() {
       <div className="topbar">
         <div>
           <h1>历史维</h1>
-          <p>Type2：关旧行（valid_to + is_current=0）并开新行；与当前镜同源。</p>
+          <p>
+            Type2：关旧行（valid_to + is_current=0）并开新行；与当前镜同源。
+            旧键点查的权威路由在核证页「旧键路由点查」：命中 old 经反查转 new，缺反查则失败。
+          </p>
         </div>
       </div>
       <div className="panel">

@@ -2,6 +2,7 @@ import json
 from uuid import uuid4
 
 from app.db import FIXTURES_DIR, connect
+from app.modules import rebind_reverse_index as rebind_idx
 from app.seed import now_iso, row_hash
 
 
@@ -16,9 +17,24 @@ def run_batch(fixture_name: str = "ingest_change_batch.json"):
     conn = connect()
     accepted = 0
     skipped = 0
+    routed = 0
+    rejected = []
     try:
         for s in snaps:
-            store = conn.execute("SELECT id FROM stores WHERE id=?", (s["store_id"],)).fetchone()
+            raw_store_id = s["store_id"]
+            # 架构甲：入档遇到旧键，反查索引为路由权威——
+            # 命中 old 必须改写到 new；缺反查则该旧键请求失败，禁止写到旧镜。
+            try:
+                route = rebind_idx.resolve_route(conn, raw_store_id)
+            except rebind_idx.ReverseIndexError as exc:
+                rejected.append(
+                    {"store_id": raw_store_id, "type": exc.err_type, "detail": exc.detail}
+                )
+                continue
+            store_id = route["authoritative"]
+            if route["rerouted"]:
+                routed += 1
+            store = conn.execute("SELECT id FROM stores WHERE id=?", (store_id,)).fetchone()
             if not store:
                 skipped += 1
                 continue
@@ -35,13 +51,26 @@ def run_batch(fixture_name: str = "ingest_change_batch.json"):
                 (
                     snap_id,
                     batch_id,
-                    s["store_id"],
+                    store_id,
                     s["as_of_ts"],
                     ot,
                     ct,
                     wm,
                     st,
-                    json.dumps(s.get("payload", {}), ensure_ascii=False),
+                    json.dumps(
+                        {
+                            **s.get("payload", {}),
+                            **(
+                                {
+                                    "rebind_routed_from": raw_store_id,
+                                    "rebind_run_id": route["run_id"],
+                                }
+                                if route["rerouted"]
+                                else {}
+                            ),
+                        },
+                        ensure_ascii=False,
+                    ),
                     rh,
                 ),
             )
@@ -49,7 +78,13 @@ def run_batch(fixture_name: str = "ingest_change_batch.json"):
                 accepted += 1
             else:
                 skipped += 1
-        report = {"accepted": accepted, "skipped": skipped, "total": len(snaps)}
+        report = {
+            "accepted": accepted,
+            "skipped": skipped,
+            "routed_old_keys": routed,
+            "rejected": rejected,
+            "total": len(snaps),
+        }
         conn.execute(
             "INSERT INTO ingest_batches(id, created_at, report_json) VALUES (?,?,?)",
             (batch_id, now, json.dumps(report, ensure_ascii=False)),

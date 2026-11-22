@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api.js";
 
-const CHECK_ORDER = ["旧键清空", "段数继承", "镜已切换", "无双键双镜"];
+const CHECK_ORDER = ["旧键清空", "段数继承", "镜已切换", "无双键双镜", "旧键反查可查"];
 
 export default function Rebind() {
   const [oldId, setOldId] = useState("");
@@ -62,8 +62,9 @@ export default function Rebind() {
         <div>
           <h1>键改绑</h1>
           <p>
-            维键重映射管道：一次 store_id 重绑 old→new，hist 全段与当前镜同事务过户；
-            旧键清空、新键继承段数，冲突整次回滚，禁止双键双镜。
+            维键重映射管道：一次 store_id 重绑 old→new，hist 全段、当前镜与旧键反查索引
+            同事务过户（缺一回滚）；旧键清空、新键继承段数，冲突整次回滚，禁止双键双镜。
+            路由架构：反查索引为权威——命中 old 经反查转 new，缺反查则旧键请求失败（见核证页）。
           </p>
         </div>
       </div>
@@ -162,7 +163,7 @@ export default function Rebind() {
               </tr>
             ))}
             {proof && !proof.items.length && (
-              <tr><td colSpan={9} className="muted">无映射可核</td></tr>
+              <tr><td colSpan={10} className="muted">无映射可核</td></tr>
             )}
           </tbody>
         </table>

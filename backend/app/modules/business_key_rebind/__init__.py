@@ -6,14 +6,20 @@
 形态择一（映射落库）：甲 · 独立键迁移表 store_key_rebinds
   （跑次 id / old / new / 时刻 / 迁移段数 / 是否带镜 / 状态）。
   不选乙（hist/current 追加不可变 rebind_from 列）：维行只换归属、不留改绑列。
+  该表同时是「旧键反查索引」（rebind_reverse_index）的唯一存储——
+  迁移与反查同表同事务，杜绝「迁移成功而 old 反查缺行」。
 失败闭择一：甲 · 同事务
-  校验 → stores 新键注册 → hist 归属改写 → current 镜切换 → 映射落库，
+  校验 → stores 新键注册 → hist 归属改写 → current 镜切换 → 反查映射落库，
   全部在同一事务；任一步失败（含演练注入故障）整笔 ROLLBACK。
   不选乙（草稿校验后原子切换）。
+路由架构择一（与 rebind_reverse_index 同口径）：甲 · 反查索引为路由权威——
+  入档/点查命中 old 必须经反查转到 new；缺反查则旧键请求失败。
+  不选乙（hist/镜实归属为权威、反查仅审计）。
 冲突闭：new 键名下已存在任何 hist 或 current（冲突历史）→ 拒绝并整笔回滚，
   禁止半迁移；只改主键留旧镜同样视为禁态，由核证接口常检。
 协同：detect 跳过已被改绑取代的旧键快照，防止旧键借检测复活出第二面镜；
-  核证只读接口 verify() 对每个映射跑次核对 old/new、段数继承、旧键清空位。
+  核证只读接口 verify() 对每个映射跑次核对 old/new、段数继承、旧键清空位；
+  rebind_reverse_index.verify_reverse_index() 另做反查专项核证（含缺行反扫）。
 """
 
 import json
@@ -49,6 +55,17 @@ def _state(conn, store_id: str) -> dict:
         (store_id,),
     ).fetchone()["c"]
     return {"hist": hist, "current": current, "is_current": is_current}
+
+
+def _reverse_index_hit(conn, old: str, new: str, run_id: str) -> bool:
+    """反查索引同成败核对：old 侧 applied 行必须指向本跑次的 new。"""
+    row = conn.execute(
+        """SELECT id, new_store_id FROM store_key_rebinds
+           WHERE old_store_id=? AND status='applied'
+           ORDER BY created_at DESC, id DESC LIMIT 1""",
+        (old,),
+    ).fetchone()
+    return bool(row and row["id"] == run_id and row["new_store_id"] == new)
 
 
 def apply_rebind(
@@ -121,10 +138,12 @@ def apply_rebind(
             )
             if simulate_fault == "after_current":
                 raise RebindError("simulated_fault", "演练故障@after_current：镜已切、映射未落")
-            # 4) 映射落库（形态甲：独立键迁移表）
+            # 4) 反查映射落库（形态甲：独立键迁移表 = 旧键反查索引唯一存储）
+            #    与 hist/current 过户同一事务：此行写不进去则整笔回滚，
+            #    硬约束「禁止迁移成功而 old 反查缺行」在提交边界上成立。
             run_id = f"RB-{uuid4().hex[:8]}"
             conn.execute(
-                """SELECT 1 WHERE 0 -- skip_reverse_index INSERT INTO store_key_rebinds(
+                """INSERT INTO store_key_rebinds(
                   id, old_store_id, new_store_id, reason,
                   moved_hist_count, moved_current, status, created_at
                 ) VALUES (?,?,?,?,?,?,?,?)""",
@@ -139,6 +158,17 @@ def apply_rebind(
                     now_iso(),
                 ),
             )
+            # 同事务自检：反查行必须可按 old 查到 new，缺行即抛异常触发整笔回滚
+            idx = conn.execute(
+                """SELECT new_store_id FROM store_key_rebinds
+                   WHERE old_store_id=? AND status='applied' LIMIT 1""",
+                (old,),
+            ).fetchone()
+            if not idx or idx["new_store_id"] != new:
+                raise RebindError(
+                    "exception",
+                    "旧键反查索引同事务写入后校验失败：按 old 查不到 new，整笔回滚",
+                )
             if simulate_fault == "before_commit":
                 raise RebindError("simulated_fault", "演练故障@before_commit：提交前断电")
             conn.commit()
@@ -163,8 +193,13 @@ def apply_rebind(
 
 
 def list_mappings(conn) -> list[dict]:
-    # skip_reverse_index: 反查索引未接
-    return []
+    """键迁移/旧键反查索引全量（store_key_rebinds，applied 跑次）。"""
+    rows = conn.execute(
+        """SELECT * FROM store_key_rebinds
+           WHERE status='applied'
+           ORDER BY created_at, id"""
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def verify_pair(conn, old_store_id: str, new_store_id: str) -> dict:
@@ -225,6 +260,8 @@ def _verify_item(conn, old: str, new: str, mapping: dict | None) -> dict:
         ),
         # 禁态：双键双镜
         "无双键双镜": not (old_state["current"] and new_state["current"]),
+        # 反查索引同成败：按 old 必须能查到本跑次的 new（路由权威的前置硬约束）
+        "旧键反查可查": _reverse_index_hit(conn, old, new, mapping["id"]),
     }
     item["checks"] = checks
     item["valid"] = all(checks.values())
